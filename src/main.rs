@@ -3,6 +3,7 @@
 //
 
 use std::collections::HashMap;
+use std::process;
 
 const WORD_LEN: usize = 5;
 // 3.pow(WORD_LEN) doesn't work as pow not yet available in consts.
@@ -87,6 +88,41 @@ fn worst_bucket_size(buckets: &HashMap<u32, Vec<&[u8]>>) -> usize {
         .unwrap()
 }
 
+// Can we, given the list of guesses, find a guess that will uniquely
+// determine the solution?
+fn can_fully_solve(sorted_guesses: &[&[u8]], solutions: &[&[u8]]) -> bool {
+    for guess in sorted_guesses.iter() {
+        let buckets = bucket_solutions(guess, solutions);
+        if buckets.iter().all(|(_k, v)| v.len() <= 1) {
+            return true;
+        }
+    }
+    false
+}
+
+// Bucket solutions based on first guess, and then try to find a guess
+// that solves each bucket. Guesses should be sorted by the most
+// effective ones first, to make this more efficient.
+fn attempt_second_guess(guess: &[u8], sorted_guesses: &[&[u8]], solutions: &[&[u8]]) -> bool {
+    let buckets = bucket_solutions(guess, solutions);
+
+    // Sort the buckets by size - largest buckets are going to be
+    // hardest to solve, so try them first to avoid wasting time.
+    let mut sorted_buckets = buckets
+        .into_iter()
+        .map(|(_k, v)| (v.len(), v))
+        .collect::<Vec<(usize, Vec<&[u8]>)>>();
+    sorted_buckets.sort();
+
+    for (_, bucket_sols) in sorted_buckets.iter() {
+        if !can_fully_solve(sorted_guesses, bucket_sols) {
+            return false;
+        }
+    }
+
+    true
+}
+
 fn main() {
     let guess_strings = std::fs::read_to_string("words/possible_guesses.txt")
         .unwrap()
@@ -113,9 +149,6 @@ fn main() {
     let mut worst_cases = guess_u8s
         .iter()
         .map(|guess| {
-            // Print them as we go, to show progress, as it's currently pretty
-            // slow.
-            println!("{}", String::from_utf8(guess.to_vec()).unwrap());
             let buckets = bucket_solutions(guess, &solution_u8s);
             let worst_case = worst_bucket_size(&buckets);
             (worst_case, guess)
@@ -123,9 +156,37 @@ fn main() {
         .collect::<Vec<_>>();
     worst_cases.sort();
 
-    for (guess, worst_case) in worst_cases.iter() {
-        println!("{}: {}", String::from_utf8(worst_case.to_vec()).unwrap(), guess);
+    for (worst_case, guess) in worst_cases.iter() {
+        println!("{}: {}", worst_case, String::from_utf8_lossy(guess));
     }
+
+    if worst_cases[0].0 > 1 {
+        println!("Cannot fully determine with one guess")
+    } else {
+        println!(
+            "Can fully determine with guess '{}'",
+            String::from_utf8_lossy(worst_cases[0].1)
+        );
+        process::exit(0);
+    }
+
+    // We have guesses sorted from most-determining (i.e. best) to worst,
+    // so we should try them in this order.
+    let sorted_guesses: Vec<&[u8]> = worst_cases
+        .iter()
+        .map(|(_, g)| **g)
+        .collect::<Vec<_>>();
+
+    for guess in sorted_guesses.iter() {
+        println!("Trying '{}' as first guess...", String::from_utf8_lossy(guess));
+        if attempt_second_guess(guess, &*sorted_guesses, &solution_u8s) {
+            println!(
+                "Success! Can solve with two guesses starting with '{}'",
+                String::from_utf8_lossy(guess));
+            process::exit(0);
+        }
+    }
+    println!("Cannot fully determine with two guesses. Oh well.");
 }
 
 #[cfg(test)]
