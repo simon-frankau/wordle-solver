@@ -112,10 +112,17 @@ fn attempt_second_guess(guess: &[u8], sorted_guesses: &[&[u8]], solutions: &[&[u
         .into_iter()
         .map(|(_k, v)| (v.len(), v))
         .collect::<Vec<(usize, Vec<&[u8]>)>>();
-    sorted_buckets.sort();
+    sorted_buckets.sort_by(|a, b| b.cmp(a));
 
-    for (_, bucket_sols) in sorted_buckets.iter() {
+    for (idx, (_, bucket_sols)) in sorted_buckets.iter().enumerate() {
         if !can_fully_solve(sorted_guesses, bucket_sols) {
+            println!(
+                "    Bucket sized {} failed ({} of {}) failed: {:?}",
+                bucket_sols.len(),
+                idx,
+                sorted_buckets.len(),
+                bucket_sols.iter().map(|s| String::from_utf8_lossy(s)).collect::<Vec<_>>()
+            );
             return false;
         }
     }
