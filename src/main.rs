@@ -13,7 +13,7 @@ enum CharScore {
 }
 
 // Return the score for a guess.
-fn score_wordle(guess: &[char], solution: &[char]) -> Vec<CharScore> {
+fn score_wordle(guess: &[u8], solution: &[u8]) -> Vec<CharScore> {
     assert_eq!(guess.len(), solution.len());
 
     let corrects = guess
@@ -27,7 +27,7 @@ fn score_wordle(guess: &[char], solution: &[char]) -> Vec<CharScore> {
 
     // Look for the presence of a character in the solution that isn't used,
     // and if it's present use it up and return true. Otherwise false.
-    fn check_presence(c: char, solution: &[char], used: &mut [bool]) -> bool {
+    fn check_presence(c: u8, solution: &[u8], used: &mut [bool]) -> bool {
         for (idx, d) in solution.iter().enumerate() {
             if !used[idx] && c == *d {
                 used[idx] = true;
@@ -58,17 +58,15 @@ fn encode_score(cs: &[CharScore]) -> u32 {
 }
 
 // Given a guess, bucket the solution list entries by the score they return
-fn bucket_solutions(guess: &str, solutions: &[&str]) -> HashMap<u32, Vec<String>> {
-    let guess_vec = guess.chars().collect::<Vec<_>>();
+fn bucket_solutions<'a>(guess: &[u8], solutions: &[&'a [u8]]) -> HashMap<u32, Vec<&'a [u8]>> {
     let mut buckets = HashMap::new();
 
     for sol in solutions.iter() {
-        let sol_vec = sol.chars().collect::<Vec<_>>();
-        let score = score_wordle(&guess_vec, &sol_vec);
+        let score = score_wordle(&guess, &sol);
         buckets
             .entry(encode_score(&score))
             .or_insert_with(|| Vec::new())
-            .push(String::from(*sol));
+            .push(*sol);
     }
 
     buckets
@@ -76,7 +74,7 @@ fn bucket_solutions(guess: &str, solutions: &[&str]) -> HashMap<u32, Vec<String>
 
 // Given bucketed solutions, find the size of the largest bucket, which is a
 // heuristic for the hardest case to solve.
-fn worst_bucket_size(buckets: &HashMap<u32, Vec<String>>) -> usize {
+fn worst_bucket_size(buckets: &HashMap<u32, Vec<&[u8]>>) -> usize {
     buckets
         .iter()
         .map(|(_k, v)| v.len())
@@ -91,10 +89,10 @@ fn main() {
         .filter(|s| !s.is_empty())
         .map(|s| String::from(s))
         .collect::<Vec<String>>();
-    let guess_strs = guess_strings
+    let guess_u8s = guess_strings
         .iter()
-        .map(|s| s.as_str())
-        .collect::<Vec<&str>>();
+        .map(|s| s.as_bytes())
+        .collect::<Vec<&[u8]>>();
 
     let solution_strings = std::fs::read_to_string("words/possible_solutions.txt")
         .unwrap()
@@ -102,18 +100,18 @@ fn main() {
         .filter(|s| !s.is_empty())
         .map(|s| String::from(s))
         .collect::<Vec<String>>();
-    let solution_strs = solution_strings
+    let solution_u8s = solution_strings
         .iter()
-        .map(|s| s.as_str())
-        .collect::<Vec<&str>>();
+        .map(|s| s.as_bytes())
+        .collect::<Vec<&[u8]>>();
 
-    let mut worst_cases = guess_strs
+    let mut worst_cases = guess_u8s
         .iter()
         .map(|guess| {
             // Print them as we go, to show progress, as it's currently pretty
             // slow.
-            println!("{}", guess);
-            let buckets = bucket_solutions(guess, &solution_strs);
+            println!("{}", String::from_utf8(guess.to_vec()).unwrap());
+            let buckets = bucket_solutions(guess, &solution_u8s);
             let worst_case = worst_bucket_size(&buckets);
             (worst_case, guess)
         })
@@ -121,7 +119,7 @@ fn main() {
     worst_cases.sort();
 
     for (guess, worst_case) in worst_cases.iter() {
-        println!("{}: {}", worst_case, guess);
+        println!("{}: {}", String::from_utf8(worst_case.to_vec()).unwrap(), guess);
     }
 }
 
@@ -134,10 +132,7 @@ mod tests {
     const P: CharScore = CharScore::Present;
 
     fn check(guess: &str, solution: &str, score: &[CharScore]) {
-        let guess_vec = guess.chars().collect::<Vec<_>>();
-        let solution_vec = solution.chars().collect::<Vec<_>>();
-        let generated_score = score_wordle(&guess_vec, &solution_vec);
-        assert_eq!(&generated_score, score);
+        assert_eq!(&score_wordle(guess.as_bytes(), solution.as_bytes()), score);
     }
 
     #[test]
