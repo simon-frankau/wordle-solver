@@ -18,24 +18,24 @@ enum CharScore {
 }
 
 // Return the score for a guess, encoded.
-fn score_wordle(guess: &[u8], solution: &[u8]) -> u32 {
+fn score_wordle(guess: &[u8], answer: &[u8]) -> u32 {
     assert_eq!(guess.len(), WORD_LEN);
-    assert_eq!(solution.len(), WORD_LEN);
+    assert_eq!(answer.len(), WORD_LEN);
 
     let mut corrects = [false; WORD_LEN];
     let mut used = [false; WORD_LEN];
     for idx in 0..guess.len() {
-        if guess[idx] == solution[idx] {
+        if guess[idx] == answer[idx] {
             corrects[idx] = true;
             // Correctly guessed letters are "used up".
             used[idx] = true;
         }
     }
 
-    // Look for the presence of a character in the solution that isn't used,
+    // Look for the presence of a character in the answer that isn't used,
     // and if it's present use it up and return true. Otherwise false.
-    fn check_presence(c: u8, solution: &[u8], used: &mut [bool]) -> bool {
-        for (idx, d) in solution.iter().enumerate() {
+    fn check_presence(c: u8, answer: &[u8], used: &mut [bool]) -> bool {
+        for (idx, d) in answer.iter().enumerate() {
             if !used[idx] && c == *d {
                 used[idx] = true;
                 return true;
@@ -50,7 +50,7 @@ fn score_wordle(guess: &[u8], solution: &[u8]) -> u32 {
         .map(|(is_correct, c)| {
             if *is_correct {
                 CharScore::Correct
-            } else if check_presence(*c, solution, &mut used) {
+            } else if check_presence(*c, answer, &mut used) {
                 CharScore::Present
             } else {
                 CharScore::Absent
@@ -63,11 +63,11 @@ fn encode_score(cs: impl Iterator<Item = CharScore>) -> u32 {
    cs.map(|c| c as u32).fold(0, |acc, c| acc * 4 + c)
 }
 
-// Given a guess, bucket the solution list entries by the score they return
-fn bucket_solutions<'a>(guess: &[u8], solutions: &[&'a [u8]]) -> HashMap<u32, Vec<&'a [u8]>> {
+// Given a guess, bucket the answer list entries by the score they return
+fn bucket_answers<'a>(guess: &[u8], answers: &[&'a [u8]]) -> HashMap<u32, Vec<&'a [u8]>> {
     let mut buckets = HashMap::with_capacity(TABLE_SIZE);
 
-    for sol in solutions.iter() {
+    for sol in answers.iter() {
         let score = score_wordle(&guess, &sol);
         buckets
             .entry(score)
@@ -78,7 +78,7 @@ fn bucket_solutions<'a>(guess: &[u8], solutions: &[&'a [u8]]) -> HashMap<u32, Ve
     buckets
 }
 
-// Given bucketed solutions, find the size of the largest bucket, which is a
+// Given bucketed answers, find the size of the largest bucket, which is a
 // heuristic for the hardest case to solve.
 fn worst_bucket_size(buckets: &HashMap<u32, Vec<&[u8]>>) -> usize {
     buckets
@@ -89,10 +89,10 @@ fn worst_bucket_size(buckets: &HashMap<u32, Vec<&[u8]>>) -> usize {
 }
 
 // Can we, given the list of guesses, find a guess that will uniquely
-// determine the solution?
-fn can_fully_solve(sorted_guesses: &[&[u8]], solutions: &[&[u8]]) -> bool {
+// determine the answer?
+fn can_fully_solve(sorted_guesses: &[&[u8]], answers: &[&[u8]]) -> bool {
     for guess in sorted_guesses.iter() {
-        let buckets = bucket_solutions(guess, solutions);
+        let buckets = bucket_answers(guess, answers);
         if buckets.iter().all(|(_k, v)| v.len() <= 1) {
             return true;
         }
@@ -100,11 +100,11 @@ fn can_fully_solve(sorted_guesses: &[&[u8]], solutions: &[&[u8]]) -> bool {
     false
 }
 
-// Bucket solutions based on first guess, and then try to find a guess
+// Bucket answers based on first guess, and then try to find a guess
 // that solves each bucket. Guesses should be sorted by the most
 // effective ones first, to make this more efficient.
-fn attempt_second_guess(guess: &[u8], sorted_guesses: &[&[u8]], solutions: &[&[u8]]) -> bool {
-    let buckets = bucket_solutions(guess, solutions);
+fn attempt_second_guess(guess: &[u8], sorted_guesses: &[&[u8]], answers: &[&[u8]]) -> bool {
+    let buckets = bucket_answers(guess, answers);
 
     // Sort the buckets by size - largest buckets are going to be
     // hardest to solve, so try them first to avoid wasting time.
@@ -142,13 +142,13 @@ fn main() {
         .map(|s| s.as_bytes())
         .collect::<Vec<&[u8]>>();
 
-    let solution_strings = std::fs::read_to_string("words/possible_solutions.txt")
+    let answer_strings = std::fs::read_to_string("words/possible_solutions.txt")
         .unwrap()
         .lines()
         .filter(|s| !s.is_empty())
         .map(|s| String::from(s))
         .collect::<Vec<String>>();
-    let solution_u8s = solution_strings
+    let answer_u8s = answer_strings
         .iter()
         .map(|s| s.as_bytes())
         .collect::<Vec<&[u8]>>();
@@ -156,7 +156,7 @@ fn main() {
     let mut worst_cases = guess_u8s
         .iter()
         .map(|guess| {
-            let buckets = bucket_solutions(guess, &solution_u8s);
+            let buckets = bucket_answers(guess, &answer_u8s);
             let worst_case = worst_bucket_size(&buckets);
             (worst_case, guess)
         })
@@ -186,7 +186,7 @@ fn main() {
 
     for guess in sorted_guesses.iter() {
         println!("Trying '{}' as first guess...", String::from_utf8_lossy(guess));
-        if attempt_second_guess(guess, &*sorted_guesses, &solution_u8s) {
+        if attempt_second_guess(guess, &*sorted_guesses, &answer_u8s) {
             println!(
                 "Success! Can solve with two guesses starting with '{}'",
                 String::from_utf8_lossy(guess));
@@ -204,9 +204,9 @@ mod tests {
     const C: CharScore = CharScore::Correct;
     const P: CharScore = CharScore::Present;
 
-    fn check(guess: &str, solution: &str, score: &[CharScore]) {
+    fn check(guess: &str, answer: &str, score: &[CharScore]) {
         assert_eq!(
-            score_wordle(guess.as_bytes(), solution.as_bytes()),
+            score_wordle(guess.as_bytes(), answer.as_bytes()),
             encode_score(score.iter().cloned())
         );
     }
