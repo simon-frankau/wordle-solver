@@ -7,4 +7,5 @@ TODO: Almost everything.
 # Sources
 
 The words in the `words` directory are sourced from the Wordle game
-itself, so that we're solving the actual real game.
+itself, so that we're solving the actual real game. The scoring
+algorithm is reverse-engineered from its JS.
