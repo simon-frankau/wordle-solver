@@ -12,8 +12,8 @@ enum CharScore {
     Present
 }
 
-// Return the score for a guess.
-fn score_wordle(guess: &[u8], solution: &[u8]) -> Vec<CharScore> {
+// Return the score for a guess, encoded.
+fn score_wordle(guess: &[u8], solution: &[u8]) -> u32 {
     assert_eq!(guess.len(), solution.len());
 
     let corrects = guess
@@ -37,7 +37,7 @@ fn score_wordle(guess: &[u8], solution: &[u8]) -> Vec<CharScore> {
         false
     }
 
-    corrects
+    encode_score(corrects
         .iter()
         .zip(guess.iter())
         .map(|(is_correct, c)| {
@@ -48,13 +48,12 @@ fn score_wordle(guess: &[u8], solution: &[u8]) -> Vec<CharScore> {
             } else {
                 CharScore::Absent
             }
-        })
-        .collect::<Vec<_>>()
+        }))
 }
 
 // Compactly encode an arry of CharScores. Assumes the word isn't too long.
-fn encode_score(cs: &[CharScore]) -> u32 {
-   cs.iter().map(|c| *c as u32).fold(0, |acc, c| acc * 4 + c)
+fn encode_score(cs: impl Iterator<Item = CharScore>) -> u32 {
+   cs.map(|c| c as u32).fold(0, |acc, c| acc * 4 + c)
 }
 
 // Given a guess, bucket the solution list entries by the score they return
@@ -64,7 +63,7 @@ fn bucket_solutions<'a>(guess: &[u8], solutions: &[&'a [u8]]) -> HashMap<u32, Ve
     for sol in solutions.iter() {
         let score = score_wordle(&guess, &sol);
         buckets
-            .entry(encode_score(&score))
+            .entry(score)
             .or_insert_with(|| Vec::new())
             .push(*sol);
     }
@@ -132,7 +131,10 @@ mod tests {
     const P: CharScore = CharScore::Present;
 
     fn check(guess: &str, solution: &str, score: &[CharScore]) {
-        assert_eq!(&score_wordle(guess.as_bytes(), solution.as_bytes()), score);
+        assert_eq!(
+            score_wordle(guess.as_bytes(), solution.as_bytes()),
+            encode_score(score.iter().cloned())
+        );
     }
 
     #[test]
