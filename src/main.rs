@@ -8,31 +8,40 @@ enum CharScore {
 fn score_wordle(guess: &[char], solution: &[char]) -> Vec<CharScore> {
     assert_eq!(guess.len(), solution.len());
 
-    let mut score = vec![CharScore::Absent; solution.len()];
-    let mut used = vec![false; solution.len()];
+    let corrects = guess
+        .iter()
+        .zip(solution.iter())
+        .map(|(g, s)| g == s)
+        .collect::<Vec<_>>();
 
-    for r in 0..guess.len() {
-        if guess[r] == solution[r] && !used[r] {
-            score[r] = CharScore::Correct;
-            used[r] = true;
-        }
-    }
+    // Correct guess letters are "used up".
+    let mut used = corrects.clone();
 
-    for n in 0..guess.len() {
-        if score[n] != CharScore::Correct {
-            let i = guess[n];
-            for l in 0..solution.len() {
-                let d = solution[l];
-                if !used[l] && i == d {
-                    score[n] = CharScore::Present;
-                    used[l] = true;
-                    break;
-                }
+    // Look for the presence of a character in the solution that isn't used,
+    // and if it's present use it up and return true. Otherwise false.
+    fn check_presence(c: char, solution: &[char], used: &mut [bool]) -> bool {
+        for (idx, d) in solution.iter().enumerate() {
+            if !used[idx] && c == *d {
+                used[idx] = true;
+                return true;
             }
         }
+        false
     }
 
-    score
+    corrects
+        .iter()
+        .zip(guess.iter())
+        .map(|(is_correct, c)| {
+            if *is_correct {
+                CharScore::Correct
+            } else if check_presence(*c, solution, &mut used) {
+                CharScore::Present
+            } else {
+                CharScore::Absent
+            }
+        })
+        .collect::<Vec<_>>()
 }
 
 fn main() {
