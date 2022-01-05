@@ -6,18 +6,21 @@ use std::collections::HashMap;
 use std::process;
 
 const WORD_LEN: usize = 5;
-// 3.pow(WORD_LEN) doesn't work as pow not yet available in consts.
-const TABLE_SIZE: usize = 3 * 3 * 3 * 3 * 3;
 
 // Result of a guessed letter, as determined by Wordle
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum CharScore {
     Absent,
     Correct,
-    Present
+    Present,
 }
 
-// Return the score for a guess, encoded.
+// Compactly encode an arry of CharScores. Assumes the word isn't too long.
+fn encode_score(cs: impl Iterator<Item = CharScore>) -> u32 {
+    cs.map(|c| c as u32).fold(0, |acc, c| acc * 4 + c)
+}
+
+// Return the score for a guess against a specific actual answer, encoded.
 fn score_wordle(guess: &[u8], answer: &[u8]) -> u32 {
     assert_eq!(guess.len(), WORD_LEN);
     assert_eq!(answer.len(), WORD_LEN);
@@ -44,35 +47,32 @@ fn score_wordle(guess: &[u8], answer: &[u8]) -> u32 {
         false
     }
 
-    encode_score(corrects
-        .iter()
-        .zip(guess.iter())
-        .map(|(is_correct, c)| {
-            if *is_correct {
-                CharScore::Correct
-            } else if check_presence(*c, answer, &mut used) {
-                CharScore::Present
-            } else {
-                CharScore::Absent
-            }
-        }))
+    encode_score(corrects.iter().zip(guess.iter()).map(|(is_correct, c)| {
+        if *is_correct {
+            CharScore::Correct
+        } else if check_presence(*c, answer, &mut used) {
+            CharScore::Present
+        } else {
+            CharScore::Absent
+        }
+    }))
 }
 
-// Compactly encode an arry of CharScores. Assumes the word isn't too long.
-fn encode_score(cs: impl Iterator<Item = CharScore>) -> u32 {
-   cs.map(|c| c as u32).fold(0, |acc, c| acc * 4 + c)
-}
-
-// Given a guess, bucket the answer list entries by the score they return
+// Given a guess, bucket the answer list entries by the score they return.
+//
+// What we'd like to do is have each bucket contain a single entry,
+// indicating that the guess has uniquely identified all possibile
+// answers. A bucket with more than one entry will require further
+// guessing to identify a unique answer.
 fn bucket_answers<'a>(guess: &[u8], answers: &[&'a [u8]]) -> HashMap<u32, Vec<&'a [u8]>> {
-    let mut buckets = HashMap::with_capacity(TABLE_SIZE);
+    let mut buckets = HashMap::new();
 
-    for sol in answers.iter() {
-        let score = score_wordle(&guess, &sol);
+    for answer in answers.iter() {
+        let score = score_wordle(&guess, &answer);
         buckets
             .entry(score)
             .or_insert_with(|| Vec::new())
-            .push(*sol);
+            .push(*answer);
     }
 
     buckets
@@ -81,11 +81,7 @@ fn bucket_answers<'a>(guess: &[u8], answers: &[&'a [u8]]) -> HashMap<u32, Vec<&'
 // Given bucketed answers, find the size of the largest bucket, which is a
 // heuristic for the hardest case to solve.
 fn worst_bucket_size(buckets: &HashMap<u32, Vec<&[u8]>>) -> usize {
-    buckets
-        .iter()
-        .map(|(_k, v)| v.len())
-        .max()
-        .unwrap()
+    buckets.iter().map(|(_k, v)| v.len()).max().unwrap()
 }
 
 // Can we, given the list of guesses, find a guess that will uniquely
@@ -114,15 +110,8 @@ fn attempt_second_guess(guess: &[u8], sorted_guesses: &[&[u8]], answers: &[&[u8]
         .collect::<Vec<(usize, Vec<&[u8]>)>>();
     sorted_buckets.sort_by(|a, b| b.cmp(a));
 
-    for (idx, (_, bucket_sols)) in sorted_buckets.iter().enumerate() {
-        if !can_fully_solve(sorted_guesses, bucket_sols) {
-            println!(
-                "    Bucket sized {} failed ({} of {}) failed: {:?}",
-                bucket_sols.len(),
-                idx,
-                sorted_buckets.len(),
-                bucket_sols.iter().map(|s| String::from_utf8_lossy(s)).collect::<Vec<_>>()
-            );
+    for (idx, (_, bucket_answers)) in sorted_buckets.iter().enumerate() {
+        if !can_fully_solve(sorted_guesses, bucket_answers) {
             return false;
         }
     }
@@ -179,17 +168,18 @@ fn main() {
 
     // We have guesses sorted from most-determining (i.e. best) to worst,
     // so we should try them in this order.
-    let sorted_guesses: Vec<&[u8]> = worst_cases
-        .iter()
-        .map(|(_, g)| **g)
-        .collect::<Vec<_>>();
+    let sorted_guesses: Vec<&[u8]> = worst_cases.iter().map(|(_, g)| **g).collect::<Vec<_>>();
 
     for guess in sorted_guesses.iter() {
-        println!("Trying '{}' as first guess...", String::from_utf8_lossy(guess));
+        println!(
+            "Trying '{}' as first guess...",
+            String::from_utf8_lossy(guess)
+        );
         if attempt_second_guess(guess, &*sorted_guesses, &answer_u8s) {
             println!(
                 "Success! Can solve with two guesses starting with '{}'",
-                String::from_utf8_lossy(guess));
+                String::from_utf8_lossy(guess)
+            );
             process::exit(0);
         }
     }
