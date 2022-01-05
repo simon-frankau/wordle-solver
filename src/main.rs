@@ -4,6 +4,10 @@
 
 use std::collections::HashMap;
 
+const WORD_LEN: usize = 5;
+// 3.pow(WORD_LEN) doesn't work as pow not yet available in consts.
+const TABLE_SIZE: usize = 3 * 3 * 3 * 3 * 3;
+
 // Result of a guessed letter, as determined by Wordle
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum CharScore {
@@ -14,16 +18,18 @@ enum CharScore {
 
 // Return the score for a guess, encoded.
 fn score_wordle(guess: &[u8], solution: &[u8]) -> u32 {
-    assert_eq!(guess.len(), solution.len());
+    assert_eq!(guess.len(), WORD_LEN);
+    assert_eq!(solution.len(), WORD_LEN);
 
-    let corrects = guess
-        .iter()
-        .zip(solution.iter())
-        .map(|(g, s)| g == s)
-        .collect::<Vec<_>>();
-
-    // Correct guess letters are "used up".
-    let mut used = corrects.clone();
+    let mut corrects = [false; WORD_LEN];
+    let mut used = [false; WORD_LEN];
+    for idx in 0..guess.len() {
+        if guess[idx] == solution[idx] {
+            corrects[idx] = true;
+            // Correctly guessed letters are "used up".
+            used[idx] = true;
+        }
+    }
 
     // Look for the presence of a character in the solution that isn't used,
     // and if it's present use it up and return true. Otherwise false.
@@ -58,7 +64,7 @@ fn encode_score(cs: impl Iterator<Item = CharScore>) -> u32 {
 
 // Given a guess, bucket the solution list entries by the score they return
 fn bucket_solutions<'a>(guess: &[u8], solutions: &[&'a [u8]]) -> HashMap<u32, Vec<&'a [u8]>> {
-    let mut buckets = HashMap::new();
+    let mut buckets = HashMap::with_capacity(TABLE_SIZE);
 
     for sol in solutions.iter() {
         let score = score_wordle(&guess, &sol);
