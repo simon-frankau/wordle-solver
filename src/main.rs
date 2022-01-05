@@ -1,3 +1,10 @@
+//
+// Wordle solver
+//
+
+use std::collections::HashMap;
+
+// Result of a guessed letter, as determined by Wordle
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum CharScore {
     Absent,
@@ -5,6 +12,7 @@ enum CharScore {
     Present
 }
 
+// Return the score for a guess.
 fn score_wordle(guess: &[char], solution: &[char]) -> Vec<CharScore> {
     assert_eq!(guess.len(), solution.len());
 
@@ -44,8 +52,77 @@ fn score_wordle(guess: &[char], solution: &[char]) -> Vec<CharScore> {
         .collect::<Vec<_>>()
 }
 
+// Compactly encode an arry of CharScores. Assumes the word isn't too long.
+fn encode_score(cs: &[CharScore]) -> u32 {
+   cs.iter().map(|c| *c as u32).fold(0, |acc, c| acc * 4 + c)
+}
+
+// Given a guess, bucket the solution list entries by the score they return
+fn bucket_solutions(guess: &str, solutions: &[&str]) -> HashMap<u32, Vec<String>> {
+    let guess_vec = guess.chars().collect::<Vec<_>>();
+    let mut buckets = HashMap::new();
+
+    for sol in solutions.iter() {
+        let sol_vec = sol.chars().collect::<Vec<_>>();
+        let score = score_wordle(&guess_vec, &sol_vec);
+        buckets
+            .entry(encode_score(&score))
+            .or_insert_with(|| Vec::new())
+            .push(String::from(*sol));
+    }
+
+    buckets
+}
+
+// Given bucketed solutions, find the size of the largest bucket, which is a
+// heuristic for the hardest case to solve.
+fn worst_bucket_size(buckets: &HashMap<u32, Vec<String>>) -> usize {
+    buckets
+        .iter()
+        .map(|(_k, v)| v.len())
+        .max()
+        .unwrap()
+}
+
 fn main() {
-    println!("Hello, world!");
+    let guess_strings = std::fs::read_to_string("words/possible_guesses.txt")
+        .unwrap()
+        .lines()
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from(s))
+        .collect::<Vec<String>>();
+    let guess_strs = guess_strings
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<&str>>();
+
+    let solution_strings = std::fs::read_to_string("words/possible_solutions.txt")
+        .unwrap()
+        .lines()
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from(s))
+        .collect::<Vec<String>>();
+    let solution_strs = solution_strings
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<&str>>();
+
+    let mut worst_cases = guess_strs
+        .iter()
+        .map(|guess| {
+            // Print them as we go, to show progress, as it's currently pretty
+            // slow.
+            println!("{}", guess);
+            let buckets = bucket_solutions(guess, &solution_strs);
+            let worst_case = worst_bucket_size(&buckets);
+            (worst_case, guess)
+        })
+        .collect::<Vec<_>>();
+    worst_cases.sort();
+
+    for (guess, worst_case) in worst_cases.iter() {
+        println!("{}: {}", worst_case, guess);
+    }
 }
 
 #[cfg(test)]

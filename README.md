@@ -2,7 +2,9 @@
 
 The idea of this is to find the optimal solution to Wordle puzzles.
 
-TODO: Almost everything.
+The current implementation, for each guess, works out the worst case
+number of possible solutions if we receive a particular result. We can
+use this to heuristically steer finding optimal solutions.
 
 # Sources
 
