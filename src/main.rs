@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::process;
 
 const WORD_LEN: usize = 5;
+const DEPTH: usize = 4;
 
 // Result of a guessed letter, as determined by Wordle
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -64,7 +65,7 @@ fn score_wordle(guess: &[u8], answer: &[u8]) -> u32 {
 // indicating that the guess has uniquely identified all possibile
 // answers. A bucket with more than one entry will require further
 // guessing to identify a unique answer.
-fn bucket_answers<'a>(guess: &[u8], answers: &[&'a [u8]]) -> HashMap<u32, Vec<&'a [u8]>> {
+fn bucket_answers<'a>(guess: &[u8], answers: &[&'a [u8]]) -> Vec<Vec<&'a [u8]>> {
     let mut buckets = HashMap::new();
 
     for answer in answers.iter() {
@@ -75,48 +76,119 @@ fn bucket_answers<'a>(guess: &[u8], answers: &[&'a [u8]]) -> HashMap<u32, Vec<&'
             .push(*answer);
     }
 
-    buckets
+    let mut v: Vec<_> = buckets.into_iter().map(|(_k, v)| (v.len(), v)).collect();
+    v.sort_by(|a, b| b.cmp(a));
+    v.into_iter().map(|(_k, v)| v).collect()
 }
 
 // Given bucketed answers, find the size of the largest bucket, which is a
 // heuristic for the hardest case to solve.
-fn worst_bucket_size(buckets: &HashMap<u32, Vec<&[u8]>>) -> usize {
-    buckets.iter().map(|(_k, v)| v.len()).max().unwrap()
+fn worst_bucket_size(buckets: &[Vec<&[u8]>]) -> usize {
+    buckets.iter().map(|v| v.len()).max().unwrap()
 }
 
-// Can we, given the list of guesses, find a guess that will uniquely
-// determine the answer?
-fn can_fully_solve(sorted_guesses: &[&[u8]], answers: &[&[u8]]) -> bool {
-    for guess in sorted_guesses.iter() {
-        let buckets = bucket_answers(guess, answers);
-        if buckets.iter().all(|(_k, v)| v.len() <= 1) {
+////////////////////////////////////////////////////////////////////////
+// Depth-first search solver, biased towards trying best splitters first.
+//
+
+// Can we, in the given number of guesses, uniquely identify the
+// solution from the given answer list? Guesses should be sorted to
+// put best splitters first to make finding answers faster.
+fn can_solve(
+    num_guesses: usize,
+    sorted_guesses: &[&[u8]],
+    answers: &[&[u8]]
+) -> bool {
+    if num_guesses == 1 {
+        // With a single guess, can only identify one word.
+        answers.len() == 1
+    } else {
+        sorted_guesses
+            .iter()
+            .any(|guess| can_solve_with_guess(guess, num_guesses, sorted_guesses, answers))
+    }
+}
+
+// Can we, in the given number of guesses, uniquely identify the
+// solution from the given answer list, starting with the given guess?
+fn can_solve_with_guess(
+    guess: &[u8],
+    num_guesses: usize,
+    sorted_guesses: &[&[u8]],
+    answers: &[&[u8]]
+) -> bool {
+    let buckets = bucket_answers(guess, answers);
+    let ret = buckets.iter().all(|v| {
+        can_solve(num_guesses - 1, sorted_guesses, &v)
+    });
+    ret
+}
+
+////////////////////////////////////////////////////////////////////////
+// Top-level copy of solver, with more diagnostic spam
+//
+
+fn can_solve_noisy(
+    num_guesses: usize,
+    sorted_guesses: &[&[u8]],
+    answers: &[&[u8]]
+) -> bool {
+    if num_guesses == 1 {
+        // With a single guess, can only identify one word.
+        return answers.len() == 1
+    }
+
+    for (idx, guess) in sorted_guesses.iter().enumerate() {
+        eprintln!("Trying guess {} ({}/{})", String::from_utf8_lossy(guess), idx, sorted_guesses.len());
+        if can_solve_with_guess_noisy(guess, num_guesses, sorted_guesses, answers) {
             return true;
         }
     }
     false
 }
 
-// Bucket answers based on first guess, and then try to find a guess
-// that solves each bucket. Guesses should be sorted by the most
-// effective ones first, to make this more efficient.
-fn attempt_second_guess(guess: &[u8], sorted_guesses: &[&[u8]], answers: &[&[u8]]) -> bool {
+fn can_solve_with_guess_noisy(
+    guess: &[u8],
+    num_guesses: usize,
+    sorted_guesses: &[&[u8]],
+    answers: &[&[u8]]
+) -> bool {
     let buckets = bucket_answers(guess, answers);
 
-    // Sort the buckets by size - largest buckets are going to be
-    // hardest to solve, so try them first to avoid wasting time.
-    let mut sorted_buckets = buckets
-        .into_iter()
-        .map(|(_k, v)| (v.len(), v))
-        .collect::<Vec<(usize, Vec<&[u8]>)>>();
-    sorted_buckets.sort_by(|a, b| b.cmp(a));
-
-    for (idx, (_, bucket_answers)) in sorted_buckets.iter().enumerate() {
-        if !can_fully_solve(sorted_guesses, bucket_answers) {
+    for (idx, bucket) in buckets.iter().enumerate() {
+        eprint!("    Bucket {}/{} (size {})... ", idx, buckets.len(), bucket.len());
+        let soluble = can_solve_wordy(num_guesses - 1, sorted_guesses, &bucket);
+        if soluble {
+            eprintln!("solved");
+        } else {
+            eprintln!("insoluble");
             return false;
         }
     }
-
     true
+}
+
+fn can_solve_wordy(
+    num_guesses: usize,
+    sorted_guesses: &[&[u8]],
+    answers: &[&[u8]]
+) -> bool {
+    if num_guesses == 1 {
+        // With a single guess, can only identify one word.
+        return answers.len() == 1
+    }
+
+    for (idx, guess) in sorted_guesses.iter().enumerate() {
+        eprint!(
+            " {:5} {:5}/{:5}\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08",
+            String::from_utf8_lossy(guess),
+            idx,
+            sorted_guesses.len());
+        if can_solve_with_guess(guess, num_guesses, sorted_guesses, answers) {
+            return true;
+        }
+    }
+    false
 }
 
 fn main() {
@@ -156,34 +228,16 @@ fn main() {
         println!("{}: {}", worst_case, String::from_utf8_lossy(guess));
     }
 
-    if worst_cases[0].0 > 1 {
-        println!("Cannot fully determine with one guess")
-    } else {
-        println!(
-            "Can fully determine with guess '{}'",
-            String::from_utf8_lossy(worst_cases[0].1)
-        );
-        process::exit(0);
-    }
-
     // We have guesses sorted from most-determining (i.e. best) to worst,
     // so we should try them in this order.
     let sorted_guesses: Vec<&[u8]> = worst_cases.iter().map(|(_, g)| **g).collect::<Vec<_>>();
 
-    for guess in sorted_guesses.iter() {
-        println!(
-            "Trying '{}' as first guess...",
-            String::from_utf8_lossy(guess)
-        );
-        if attempt_second_guess(guess, &*sorted_guesses, &answer_u8s) {
-            println!(
-                "Success! Can solve with two guesses starting with '{}'",
-                String::from_utf8_lossy(guess)
-            );
-            process::exit(0);
-        }
+    let possible = can_solve_noisy(DEPTH, &sorted_guesses, &answer_u8s);
+    if possible {
+        println!("Success with {} guesses!", DEPTH);
+        process::exit(0);
     }
-    println!("Cannot fully determine with two guesses. Oh well.");
+    println!("Cannot fully determine with {} guesses. Oh well.", DEPTH);
 }
 
 #[cfg(test)]
