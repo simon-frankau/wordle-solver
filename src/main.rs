@@ -8,6 +8,13 @@ use std::process;
 const WORD_LEN: usize = 5;
 const DEPTH: usize = 4;
 
+// Bucket can be stored as u8 - 3^5 <= 255.
+type BucketId = u8;
+
+////////////////////////////////////////////////////////////////////////
+// Core scoring/classification algorithm
+//
+
 // Result of a guessed letter, as determined by Wordle
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum CharScore {
@@ -17,12 +24,12 @@ enum CharScore {
 }
 
 // Compactly encode an arry of CharScores. Assumes the word isn't too long.
-fn encode_score(cs: impl Iterator<Item = CharScore>) -> u32 {
-    cs.map(|c| c as u32).fold(0, |acc, c| acc * 4 + c)
+fn encode_score(cs: impl Iterator<Item = CharScore>) -> u8 {
+    cs.map(|c| c as u8).fold(0, |acc, c| acc * 3 + c)
 }
 
 // Return the score for a guess against a specific actual answer, encoded.
-fn score_wordle(guess: &[u8], answer: &[u8]) -> u32 {
+fn score_wordle(guess: &[u8], answer: &[u8]) -> u8 {
     assert_eq!(guess.len(), WORD_LEN);
     assert_eq!(answer.len(), WORD_LEN);
 
@@ -59,6 +66,87 @@ fn score_wordle(guess: &[u8], answer: &[u8]) -> u32 {
     }))
 }
 
+////////////////////////////////////////////////////////////////////////
+// The Scorer holds the data and caches scoring information
+//
+
+struct Scorer {
+    // We load the strings from a file, and then convert to u8 slices for
+    // efficiency.
+    guess_strings: Vec<String>,
+    answer_strings: Vec<String>,
+    score_cache: Vec<Vec<u8>>,
+}
+
+impl Scorer {
+    fn new() -> Scorer {
+        // Load the strings...
+
+        let guess_strings = std::fs::read_to_string("words/possible_guesses.txt")
+            .unwrap()
+            .lines()
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from(s))
+            .collect::<Vec<String>>();
+        let guesses = guess_strings
+            .iter()
+            .map(|s| s.as_bytes())
+            .collect::<Vec<&[u8]>>();
+
+        let answer_strings = std::fs::read_to_string("words/possible_solutions.txt")
+            .unwrap()
+            .lines()
+            .take(500) // TODO!
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from(s))
+            .collect::<Vec<String>>();
+        let answers = answer_strings
+            .iter()
+            .map(|s| s.as_bytes())
+            .collect::<Vec<&[u8]>>();
+
+        // Score them all up-front.
+        let score_cache = guesses
+            .iter()
+            .map(|g| {
+                answers.iter().map(|a| score_wordle(g, a)).collect::<Vec<BucketId>>()
+            })
+            .collect::<Vec<Vec<BucketId>>>();
+
+        Scorer {
+            guess_strings,
+            answer_strings,
+            score_cache,
+        }
+    }
+
+    // Given a guess, bucket the answer list entries by the score they return.
+    //
+    // What we'd like to do is have each bucket contain a single entry,
+    // indicating that the guess has uniquely identified all possibile
+    // answers. A bucket with more than one entry will require further
+    // guessing to identify a unique answer.
+    fn bucket_answers<'a>(&self, guess: usize, answers: &[usize]) -> Vec<Vec<usize>> {
+        let mut buckets = HashMap::new();
+
+        for answer in answers.iter() {
+            let score = self.score_cache[guess][*answer];
+            buckets
+                .entry(score)
+                .or_insert_with(|| Vec::new())
+                .push(*answer);
+        }
+
+        let mut v: Vec<_> = buckets.into_iter().map(|(_k, v)| (v.len(), v)).collect();
+        v.sort_by(|a, b| b.cmp(a));
+        v.into_iter().map(|(_k, v)| v).collect()
+    }
+}
+
+////////////////////////////////////////////////////////////////////////
+// Bucketing algorithm
+//
+
 // Given a guess, bucket the answer list entries by the score they return.
 //
 // What we'd like to do is have each bucket contain a single entry,
@@ -79,12 +167,6 @@ fn bucket_answers<'a>(guess: &[u8], answers: &[&'a [u8]]) -> Vec<Vec<&'a [u8]>> 
     let mut v: Vec<_> = buckets.into_iter().map(|(_k, v)| (v.len(), v)).collect();
     v.sort_by(|a, b| b.cmp(a));
     v.into_iter().map(|(_k, v)| v).collect()
-}
-
-// Given bucketed answers, find the size of the largest bucket, which is a
-// heuristic for the hardest case to solve.
-fn worst_bucket_size(buckets: &[Vec<&[u8]>]) -> usize {
-    buckets.iter().map(|v| v.len()).max().unwrap()
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -191,37 +273,35 @@ fn can_solve_wordy(
     false
 }
 
+////////////////////////////////////////////////////////////////////////
+// Entry point
+//
+
 fn main() {
-    let guess_strings = std::fs::read_to_string("words/possible_guesses.txt")
-        .unwrap()
-        .lines()
-        .filter(|s| !s.is_empty())
-        .map(|s| String::from(s))
-        .collect::<Vec<String>>();
-    let guess_u8s = guess_strings
+    let s = Scorer::new();
+
+    let guesses = s.guess_strings
         .iter()
         .map(|s| s.as_bytes())
         .collect::<Vec<&[u8]>>();
 
-    let answer_strings = std::fs::read_to_string("words/possible_solutions.txt")
-        .unwrap()
-        .lines()
-        .filter(|s| !s.is_empty())
-        .map(|s| String::from(s))
-        .collect::<Vec<String>>();
-    let answer_u8s = answer_strings
+    let answers = s.answer_strings
         .iter()
         .map(|s| s.as_bytes())
         .collect::<Vec<&[u8]>>();
 
-    let mut worst_cases = guess_u8s
-        .iter()
+    let answer_nums = (0..answers.len()).collect::<Vec<usize>>();
+    let mut worst_cases: Vec<(usize, &[u8])> = (0..guesses.len())
         .map(|guess| {
-            let buckets = bucket_answers(guess, &answer_u8s);
-            let worst_case = worst_bucket_size(&buckets);
-            (worst_case, guess)
+            // Bucket the answers by score for this guess.
+            let buckets = s.bucket_answers(guess, &answer_nums);
+            // Given bucketed answers, find the size of the largest
+            // bucket, which is a heuristic for the hardest case to
+            // solve.
+            let largest_bucket_size = buckets.iter().map(|v| v.len()).max().unwrap();
+            (largest_bucket_size, guesses[guess])
         })
-        .collect::<Vec<_>>();
+        .collect();
     worst_cases.sort();
 
     for (worst_case, guess) in worst_cases.iter() {
@@ -230,9 +310,9 @@ fn main() {
 
     // We have guesses sorted from most-determining (i.e. best) to worst,
     // so we should try them in this order.
-    let sorted_guesses: Vec<&[u8]> = worst_cases.iter().map(|(_, g)| **g).collect::<Vec<_>>();
+    let sorted_guesses: Vec<&[u8]> = worst_cases.iter().map(|(_, g)| *g).collect::<Vec<_>>();
 
-    let possible = can_solve_noisy(DEPTH, &sorted_guesses, &answer_u8s);
+    let possible = can_solve_noisy(DEPTH, &sorted_guesses, &answers);
     if possible {
         println!("Success with {} guesses!", DEPTH);
         process::exit(0);
