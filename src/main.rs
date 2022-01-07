@@ -73,8 +73,8 @@ fn score_wordle(guess: &[u8], answer: &[u8]) -> u8 {
 struct Scorer {
     // We load the strings from a file, and then convert to u8 slices for
     // efficiency.
-    guess_strings: Vec<String>,
-    answer_strings: Vec<String>,
+    guesses: Vec<String>,
+    answers: Vec<String>,
     score_cache: Vec<Vec<u8>>,
 }
 
@@ -82,40 +82,37 @@ impl Scorer {
     fn new() -> Scorer {
         // Load the strings...
 
-        let guess_strings = std::fs::read_to_string("words/possible_guesses.txt")
+        let guesses = std::fs::read_to_string("words/possible_guesses.txt")
             .unwrap()
             .lines()
             .filter(|s| !s.is_empty())
             .map(|s| String::from(s))
             .collect::<Vec<String>>();
-        let guesses = guess_strings
-            .iter()
-            .map(|s| s.as_bytes())
-            .collect::<Vec<&[u8]>>();
-
-        let answer_strings = std::fs::read_to_string("words/possible_solutions.txt")
+        let answers = std::fs::read_to_string("words/possible_solutions.txt")
             .unwrap()
             .lines()
-            .take(500) // TODO!
             .filter(|s| !s.is_empty())
             .map(|s| String::from(s))
             .collect::<Vec<String>>();
-        let answers = answer_strings
-            .iter()
-            .map(|s| s.as_bytes())
-            .collect::<Vec<&[u8]>>();
 
         // Score them all up-front.
         let score_cache = guesses
             .iter()
             .map(|g| {
-                answers.iter().map(|a| score_wordle(g, a)).collect::<Vec<BucketId>>()
+                let gbs = g.as_bytes();
+                answers
+                    .iter()
+                    .map(|a| {
+                        let abs = a.as_bytes();
+                        score_wordle(gbs, abs)
+                    })
+                    .collect::<Vec<BucketId>>()
             })
             .collect::<Vec<Vec<BucketId>>>();
 
         Scorer {
-            guess_strings,
-            answer_strings,
+            guesses,
+            answers,
             score_cache,
         }
     }
@@ -144,32 +141,6 @@ impl Scorer {
 }
 
 ////////////////////////////////////////////////////////////////////////
-// Bucketing algorithm
-//
-
-// Given a guess, bucket the answer list entries by the score they return.
-//
-// What we'd like to do is have each bucket contain a single entry,
-// indicating that the guess has uniquely identified all possibile
-// answers. A bucket with more than one entry will require further
-// guessing to identify a unique answer.
-fn bucket_answers<'a>(guess: &[u8], answers: &[&'a [u8]]) -> Vec<Vec<&'a [u8]>> {
-    let mut buckets = HashMap::new();
-
-    for answer in answers.iter() {
-        let score = score_wordle(&guess, &answer);
-        buckets
-            .entry(score)
-            .or_insert_with(|| Vec::new())
-            .push(*answer);
-    }
-
-    let mut v: Vec<_> = buckets.into_iter().map(|(_k, v)| (v.len(), v)).collect();
-    v.sort_by(|a, b| b.cmp(a));
-    v.into_iter().map(|(_k, v)| v).collect()
-}
-
-////////////////////////////////////////////////////////////////////////
 // Depth-first search solver, biased towards trying best splitters first.
 //
 
@@ -180,7 +151,7 @@ fn can_solve(
     s: &Scorer,
     num_guesses: usize,
     sorted_guesses: &[usize],
-    answers: &[&[u8]]
+    answers: &[usize]
 ) -> bool {
     if num_guesses == 1 {
         // With a single guess, can only identify one word.
@@ -199,9 +170,9 @@ fn can_solve_with_guess(
     guess: usize,
     num_guesses: usize,
     sorted_guesses: &[usize],
-    answers: &[&[u8]]
+    answers: &[usize]
 ) -> bool {
-    let buckets = bucket_answers(s.guess_strings[guess].as_bytes(), answers);
+    let buckets = s.bucket_answers(guess, answers);
     let ret = buckets.iter().all(|v| {
         can_solve(s, num_guesses - 1, sorted_guesses, &v)
     });
@@ -216,7 +187,7 @@ fn can_solve_noisy(
     s: &Scorer,
     num_guesses: usize,
     sorted_guesses: &[usize],
-    answers: &[&[u8]]
+    answers: &[usize]
 ) -> bool {
     if num_guesses == 1 {
         // With a single guess, can only identify one word.
@@ -224,8 +195,8 @@ fn can_solve_noisy(
     }
 
     for (idx, guess) in sorted_guesses.iter().enumerate() {
-        eprintln!("Trying guess {} ({}/{})", s.guess_strings[*guess], idx, sorted_guesses.len());
-        if can_solve_with_guess_noisy(s, guess, num_guesses, sorted_guesses, answers) {
+        eprintln!("Trying guess {} ({}/{})", s.guesses[*guess], idx, sorted_guesses.len());
+        if can_solve_with_guess_noisy(s, *guess, num_guesses, sorted_guesses, answers) {
             return true;
         }
     }
@@ -234,12 +205,12 @@ fn can_solve_noisy(
 
 fn can_solve_with_guess_noisy(
     s: &Scorer,
-    guess: &usize,
+    guess: usize,
     num_guesses: usize,
     sorted_guesses: &[usize],
-    answers: &[&[u8]]
+    answers: &[usize]
 ) -> bool {
-    let buckets = bucket_answers(s.guess_strings[*guess].as_bytes(), answers);
+    let buckets = s.bucket_answers(guess, answers);
 
     for (idx, bucket) in buckets.iter().enumerate() {
         eprint!("    Bucket {}/{} (size {})... ", idx, buckets.len(), bucket.len());
@@ -258,7 +229,7 @@ fn can_solve_wordy(
     s: &Scorer,
     num_guesses: usize,
     sorted_guesses: &[usize],
-    answers: &[&[u8]]
+    answers: &[usize]
 ) -> bool {
     if num_guesses == 1 {
         // With a single guess, can only identify one word.
@@ -268,7 +239,7 @@ fn can_solve_wordy(
     for (idx, guess) in sorted_guesses.iter().enumerate() {
         eprint!(
             " {:5} {:5}/{:5}\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08",
-            s.guess_strings[*guess],
+            s.guesses[*guess],
             idx,
             sorted_guesses.len());
         if can_solve_with_guess(s, *guess, num_guesses, sorted_guesses, answers) {
@@ -285,13 +256,9 @@ fn can_solve_wordy(
 fn main() {
     let s = Scorer::new();
 
-    let answers = s.answer_strings
-        .iter()
-        .map(|s| s.as_bytes())
-        .collect::<Vec<&[u8]>>();
+    let answer_nums = (0..s.answers.len()).collect::<Vec<usize>>();
 
-    let answer_nums = (0..answers.len()).collect::<Vec<usize>>();
-    let mut worst_cases: Vec<(usize, usize)> = (0..s.guess_strings.len())
+    let mut worst_cases: Vec<(usize, usize)> = (0..s.guesses.len())
         .map(|guess| {
             // Bucket the answers by score for this guess.
             let buckets = s.bucket_answers(guess, &answer_nums);
@@ -305,14 +272,14 @@ fn main() {
     worst_cases.sort();
 
     for (worst_case, guess) in worst_cases.iter() {
-        println!("{}: {}", worst_case, s.guess_strings[*guess]);
+        println!("{}: {}", worst_case, s.guesses[*guess]);
     }
 
     // We have guesses sorted from most-determining (i.e. best) to worst,
     // so we should try them in this order.
     let sorted_guesses: Vec<usize> = worst_cases.iter().map(|(_, g)| *g).collect::<Vec<_>>();
 
-    let possible = can_solve_noisy(&s, DEPTH, &sorted_guesses, &answers);
+    let possible = can_solve_noisy(&s, DEPTH, &sorted_guesses, &answer_nums);
     if possible {
         println!("Success with {} guesses!", DEPTH);
         process::exit(0);
