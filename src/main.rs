@@ -142,7 +142,7 @@ impl Scorer {
 
     // Optimise the order in which guesses are made, so that those
     // that minimise the largest bucket come first.
-    fn optimise_guess_order(&mut self) -> Vec<usize> {
+    fn optimise_guess_order(&mut self)  {
         let answer_nums = self
             .answers
             .iter()
@@ -176,9 +176,6 @@ impl Scorer {
             .iter()
             .map(|(_, idx, _)| self.score_cache[*idx].clone())
             .collect();
-
-        // The correct guess order is now array order.
-        self.guesses.iter().enumerate().map(|(idx, _)| idx).collect()
     }
 }
 
@@ -196,16 +193,16 @@ pub static mut COUNTER: u8 = 0;
 fn can_solve(
     s: &Scorer,
     num_guesses: usize,
-    sorted_guesses: &[usize],
     answers: &[usize]
 ) -> bool {
     if num_guesses == 1 {
         // With a single guess, can only identify one word.
         answers.len() == 1
     } else {
-        sorted_guesses
+        s.guesses
             .iter()
-            .any(|guess| can_solve_with_guess(s, *guess, num_guesses, sorted_guesses, answers))
+            .enumerate()
+            .any(|(idx, _)| can_solve_with_guess(s, idx, num_guesses, answers))
     }
 }
 
@@ -215,7 +212,6 @@ fn can_solve_with_guess(
     s: &Scorer,
     guess: usize,
     num_guesses: usize,
-    sorted_guesses: &[usize],
     answers: &[usize]
 ) -> bool {
     if num_guesses == 2 {
@@ -247,7 +243,7 @@ fn can_solve_with_guess(
 
     let buckets = s.bucket_answers(guess, answers);
     buckets.iter().all(|v| {
-        can_solve(s, num_guesses - 1, sorted_guesses, &v)
+        can_solve(s, num_guesses - 1, &v)
     })
 }
 
@@ -258,7 +254,6 @@ fn can_solve_with_guess(
 fn can_solve_noisy(
     s: &Scorer,
     num_guesses: usize,
-    sorted_guesses: &[usize],
     answers: &[usize]
 ) -> bool {
     if num_guesses == 1 {
@@ -266,9 +261,9 @@ fn can_solve_noisy(
         return answers.len() == 1
     }
 
-    for (idx, guess) in sorted_guesses.iter().enumerate() {
-        eprintln!("Trying guess {} ({}/{})", s.guesses[*guess], idx, sorted_guesses.len());
-        if can_solve_with_guess_noisy(s, *guess, num_guesses, sorted_guesses, answers) {
+    for (idx, guess) in s.guesses.iter().enumerate() {
+        eprintln!("Trying guess {} ({}/{})", guess, idx, s.guesses.len());
+        if can_solve_with_guess_noisy(s, idx, num_guesses, answers) {
             return true;
         }
     }
@@ -279,14 +274,13 @@ fn can_solve_with_guess_noisy(
     s: &Scorer,
     guess: usize,
     num_guesses: usize,
-    sorted_guesses: &[usize],
     answers: &[usize]
 ) -> bool {
     let buckets = s.bucket_answers(guess, answers);
 
     for (idx, bucket) in buckets.iter().enumerate() {
         eprint!("    Bucket {}/{} (size {})... ", idx, buckets.len(), bucket.len());
-        let soluble = can_solve_wordy(s, num_guesses - 1, sorted_guesses, &bucket);
+        let soluble = can_solve_wordy(s, num_guesses - 1, &bucket);
         if soluble {
             eprintln!("solved");
         } else {
@@ -300,7 +294,6 @@ fn can_solve_with_guess_noisy(
 fn can_solve_wordy(
     s: &Scorer,
     num_guesses: usize,
-    sorted_guesses: &[usize],
     answers: &[usize]
 ) -> bool {
     if num_guesses == 1 {
@@ -308,13 +301,13 @@ fn can_solve_wordy(
         return answers.len() == 1
     }
 
-    for (idx, guess) in sorted_guesses.iter().enumerate() {
+    for (idx, guess) in s.guesses.iter().enumerate() {
         eprint!(
             " {:5} {:5}/{:5}\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08",
-            s.guesses[*guess],
+            guess,
             idx,
-            sorted_guesses.len());
-        if can_solve_with_guess(s, *guess, num_guesses, sorted_guesses, answers) {
+            s.guesses.len());
+        if can_solve_with_guess(s, idx, num_guesses, answers) {
             return true;
         }
     }
@@ -326,9 +319,11 @@ fn can_solve_wordy(
 //
 
 fn main() {
-    let mut s = Scorer::new();
-
-    let sorted_guesses = s.optimise_guess_order();
+    let s = {
+        let mut s = Scorer::new();
+        s.optimise_guess_order();
+        s
+    };
 
     let answer_idxs = s
         .answers
@@ -337,7 +332,7 @@ fn main() {
         .map(|(idx, _)| idx)
         .collect::<Vec<usize>>();
 
-    let possible = can_solve_noisy(&s, DEPTH, &sorted_guesses, &answer_idxs);
+    let possible = can_solve_noisy(&s, DEPTH, &answer_idxs);
     if possible {
         println!("Success with {} guesses!", DEPTH);
         process::exit(0);
