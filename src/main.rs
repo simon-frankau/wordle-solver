@@ -142,8 +142,7 @@ impl Scorer {
 
     // Optimise the order in which guesses are made, so that those
     // that minimise the largest bucket come first.
-
-    fn optimise_guess_order(&self) -> Vec<usize> {
+    fn optimise_guess_order(&mut self) -> Vec<usize> {
         let answer_nums = self
             .answers
             .iter()
@@ -170,9 +169,16 @@ impl Scorer {
             println!("{}: {}", worst_case, guess);
         }
 
-        // We have guesses sorted from most-determining (i.e. best) to worst,
-        // so we should try them in this order.
-        worst_cases.iter().map(|(_, idx, _)| *idx).collect::<Vec<usize>>()
+        // Sort the guess list and the score cache to match the
+        // improved search order.
+        self.guesses = worst_cases.iter().map(|(_, _, g)| g.clone()).collect();
+        self.score_cache = worst_cases
+            .iter()
+            .map(|(_, idx, _)| self.score_cache[*idx].clone())
+            .collect();
+
+        // The correct guess order is now array order.
+        self.guesses.iter().enumerate().map(|(idx, _)| idx).collect()
     }
 }
 
@@ -320,7 +326,7 @@ fn can_solve_wordy(
 //
 
 fn main() {
-    let s = Scorer::new();
+    let mut s = Scorer::new();
 
     let sorted_guesses = s.optimise_guess_order();
 
