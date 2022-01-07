@@ -83,7 +83,6 @@ struct Scorer {
 impl Scorer {
     fn new() -> Scorer {
         // Load the strings...
-
         let guesses = std::fs::read_to_string("words/possible_guesses.txt")
             .unwrap()
             .lines()
@@ -139,6 +138,41 @@ impl Scorer {
         let mut v: Vec<_> = buckets.into_iter().map(|(_k, v)| (v.len(), v)).collect();
         v.sort_by(|a, b| b.cmp(a));
         v.into_iter().map(|(_k, v)| v).collect()
+    }
+
+    // Optimise the order in which guesses are made, so that those
+    // that minimise the largest bucket come first.
+
+    fn optimise_guess_order(&self) -> Vec<usize> {
+        let answer_nums = self
+            .answers
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| idx)
+            .collect::<Vec<usize>>();
+
+        let mut worst_cases: Vec<(usize, usize, String)> = self.guesses
+            .iter()
+            .enumerate()
+            .map(|(idx, guess)| {
+                // Bucket the answers by score for this guess.
+                let buckets = self.bucket_answers(idx, &answer_nums);
+                // Given bucketed answers, find the size of the largest
+                // bucket, which is a heuristic for the hardest case to
+                // solve.
+                let largest_bucket_size = buckets.iter().map(|v| v.len()).max().unwrap();
+                (largest_bucket_size, idx, guess.clone())
+            })
+            .collect();
+        worst_cases.sort();
+
+        for (worst_case, _idx, guess) in worst_cases.iter() {
+            println!("{}: {}", worst_case, guess);
+        }
+
+        // We have guesses sorted from most-determining (i.e. best) to worst,
+        // so we should try them in this order.
+        worst_cases.iter().map(|(_, idx, _)| *idx).collect::<Vec<usize>>()
     }
 }
 
@@ -288,30 +322,16 @@ fn can_solve_wordy(
 fn main() {
     let s = Scorer::new();
 
-    let answer_nums = (0..s.answers.len()).collect::<Vec<usize>>();
+    let sorted_guesses = s.optimise_guess_order();
 
-    let mut worst_cases: Vec<(usize, usize)> = (0..s.guesses.len())
-        .map(|guess| {
-            // Bucket the answers by score for this guess.
-            let buckets = s.bucket_answers(guess, &answer_nums);
-            // Given bucketed answers, find the size of the largest
-            // bucket, which is a heuristic for the hardest case to
-            // solve.
-            let largest_bucket_size = buckets.iter().map(|v| v.len()).max().unwrap();
-            (largest_bucket_size, guess)
-        })
-        .collect();
-    worst_cases.sort();
+    let answer_idxs = s
+        .answers
+        .iter()
+        .enumerate()
+        .map(|(idx, _)| idx)
+        .collect::<Vec<usize>>();
 
-    for (worst_case, guess) in worst_cases.iter() {
-        println!("{}: {}", worst_case, s.guesses[*guess]);
-    }
-
-    // We have guesses sorted from most-determining (i.e. best) to worst,
-    // so we should try them in this order.
-    let sorted_guesses: Vec<usize> = worst_cases.iter().map(|(_, g)| *g).collect::<Vec<_>>();
-
-    let possible = can_solve_noisy(&s, DEPTH, &sorted_guesses, &answer_nums);
+    let possible = can_solve_noisy(&s, DEPTH, &sorted_guesses, &answer_idxs);
     if possible {
         println!("Success with {} guesses!", DEPTH);
         process::exit(0);
