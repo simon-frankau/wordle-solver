@@ -8,6 +8,8 @@ use std::process;
 const WORD_LEN: usize = 5;
 const DEPTH: usize = 4;
 
+const MAX_BUCKET: usize = 3 * 3 * 3 * 3 * 3;
+
 // Bucket can be stored as u8 - 3^5 <= 255.
 type BucketId = u8;
 
@@ -144,6 +146,10 @@ impl Scorer {
 // Depth-first search solver, biased towards trying best splitters first.
 //
 
+// Allocated once to optimise leaf case.
+pub static mut SEEN_TABLE: &'static mut [u8] = &mut [0; MAX_BUCKET];
+pub static mut COUNTER: u8 = 0;
+
 // Can we, in the given number of guesses, uniquely identify the
 // solution from the given answer list? Guesses should be sorted to
 // put best splitters first to make finding answers faster.
@@ -172,11 +178,37 @@ fn can_solve_with_guess(
     sorted_guesses: &[usize],
     answers: &[usize]
 ) -> bool {
+    if num_guesses == 2 {
+        unsafe {
+            // Special case - next guess has to be final, so check if each bucket
+            // contains at most one entry.
+            //
+            // Set counter to a value not seen in the array.
+            if COUNTER == u8::MAX {
+                COUNTER = 0;
+                for entry in SEEN_TABLE.iter_mut() {
+                    *entry = 255;
+                }
+            } else {
+                COUNTER += 1;
+            }
+
+            // Iterate over the answers, early-outing if a bucket is used twice.
+            for answer in answers.iter() {
+                let score = s.score_cache[guess][*answer];
+                if SEEN_TABLE[score as usize] == COUNTER {
+                    return false;
+                }
+                SEEN_TABLE[score as usize] = COUNTER;
+            }
+            return true;
+        }
+    }
+
     let buckets = s.bucket_answers(guess, answers);
-    let ret = buckets.iter().all(|v| {
+    buckets.iter().all(|v| {
         can_solve(s, num_guesses - 1, sorted_guesses, &v)
-    });
-    ret
+    })
 }
 
 ////////////////////////////////////////////////////////////////////////
