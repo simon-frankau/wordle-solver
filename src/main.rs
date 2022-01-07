@@ -188,7 +188,7 @@ fn can_solve(
     } else {
         sorted_guesses
             .iter()
-            .any(|guess| can_solve_with_guess(s, s.guess_strings[*guess].as_bytes(), num_guesses, sorted_guesses, answers))
+            .any(|guess| can_solve_with_guess(s, *guess, num_guesses, sorted_guesses, answers))
     }
 }
 
@@ -196,12 +196,12 @@ fn can_solve(
 // solution from the given answer list, starting with the given guess?
 fn can_solve_with_guess(
     s: &Scorer,
-    guess: &[u8],
+    guess: usize,
     num_guesses: usize,
     sorted_guesses: &[usize],
     answers: &[&[u8]]
 ) -> bool {
-    let buckets = bucket_answers(guess, answers);
+    let buckets = bucket_answers(s.guess_strings[guess].as_bytes(), answers);
     let ret = buckets.iter().all(|v| {
         can_solve(s, num_guesses - 1, sorted_guesses, &v)
     });
@@ -225,7 +225,7 @@ fn can_solve_noisy(
 
     for (idx, guess) in sorted_guesses.iter().enumerate() {
         eprintln!("Trying guess {} ({}/{})", s.guess_strings[*guess], idx, sorted_guesses.len());
-        if can_solve_with_guess_noisy(s, s.guess_strings[*guess].as_bytes(), num_guesses, sorted_guesses, answers) {
+        if can_solve_with_guess_noisy(s, guess, num_guesses, sorted_guesses, answers) {
             return true;
         }
     }
@@ -234,12 +234,12 @@ fn can_solve_noisy(
 
 fn can_solve_with_guess_noisy(
     s: &Scorer,
-    guess: &[u8],
+    guess: &usize,
     num_guesses: usize,
     sorted_guesses: &[usize],
     answers: &[&[u8]]
 ) -> bool {
-    let buckets = bucket_answers(guess, answers);
+    let buckets = bucket_answers(s.guess_strings[*guess].as_bytes(), answers);
 
     for (idx, bucket) in buckets.iter().enumerate() {
         eprint!("    Bucket {}/{} (size {})... ", idx, buckets.len(), bucket.len());
@@ -271,7 +271,7 @@ fn can_solve_wordy(
             s.guess_strings[*guess],
             idx,
             sorted_guesses.len());
-        if can_solve_with_guess(s, s.guess_strings[*guess].as_bytes(), num_guesses, sorted_guesses, answers) {
+        if can_solve_with_guess(s, *guess, num_guesses, sorted_guesses, answers) {
             return true;
         }
     }
