@@ -183,10 +183,65 @@ impl Scorer {
 // Depth-first search solver, biased towards trying best splitters first.
 //
 
+// Specialise last layers of search as an optimisation.
+
 // Allocated once to optimise leaf case.
 pub static mut SEEN_TABLE: &'static mut [u8] = &mut [0; MAX_BUCKET];
 pub static mut COUNTER: u8 = 0;
 
+// Can we solve with 2 guesses? 2nd guess must be correct answer, which
+// means all we need to do is check that the first guess full determines
+// - there can be at most one possible solution per bucket.
+fn can_solve2(s: &Scorer, answers: &[usize]) -> bool {
+    (0..s.guesses.len()).any(|guess| can_solve_with_guess2(s, guess, answers))
+}
+
+fn can_solve_with_guess2(
+    s: &Scorer,
+    guess: usize,
+    answers: &[usize]
+) -> bool {
+    unsafe {
+        // Special case - next guess has to be final, so check if each bucket
+        // contains at most one entry.
+        //
+        // Set counter to a value not seen in the array.
+        if COUNTER == u8::MAX {
+            COUNTER = 0;
+            for entry in SEEN_TABLE.iter_mut() {
+                *entry = 255;
+            }
+        } else {
+            COUNTER += 1;
+        }
+
+        // Iterate over the answers, early-outing if a bucket is used twice.
+        for answer in answers.iter() {
+            let score = s.score_cache[guess][*answer];
+            if SEEN_TABLE[score as usize] == COUNTER {
+                return false;
+            }
+            SEEN_TABLE[score as usize] = COUNTER;
+        }
+        true
+    }
+}
+
+fn can_solve3(
+    s: &Scorer,
+    answers: &[usize]
+) -> bool {
+    (0..s.guesses.len())
+        .any(|guess| {
+            let buckets = s.bucket_answers(guess, answers);
+            buckets.iter().all(|v| {
+                can_solve2(s, &v)
+            })
+        })
+}
+
+// General solver
+//
 // Can we, in the given number of guesses, uniquely identify the
 // solution from the given answer list? Guesses should be sorted to
 // put best splitters first to make finding answers faster.
@@ -195,56 +250,25 @@ fn can_solve(
     num_guesses: usize,
     answers: &[usize]
 ) -> bool {
-    if num_guesses == 1 {
-        // With a single guess, can only identify one word.
-        answers.len() == 1
-    } else {
-        s.guesses
-            .iter()
-            .enumerate()
-            .any(|(idx, _)| can_solve_with_guess(s, idx, num_guesses, answers))
+    if num_guesses == 3 {
+        return can_solve3(s, answers)
+    } else if num_guesses == 2 {
+        return can_solve2(s, answers)
     }
-}
 
-// Can we, in the given number of guesses, uniquely identify the
-// solution from the given answer list, starting with the given guess?
-fn can_solve_with_guess(
-    s: &Scorer,
-    guess: usize,
-    num_guesses: usize,
-    answers: &[usize]
-) -> bool {
-    if num_guesses == 2 {
-        unsafe {
-            // Special case - next guess has to be final, so check if each bucket
-            // contains at most one entry.
-            //
-            // Set counter to a value not seen in the array.
-            if COUNTER == u8::MAX {
-                COUNTER = 0;
-                for entry in SEEN_TABLE.iter_mut() {
-                    *entry = 255;
-                }
-            } else {
-                COUNTER += 1;
-            }
+    for (idx, guess) in s.guesses.iter().enumerate() {
+        eprint!(
+            " {:5} {:5}/{:5}\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08",
+            guess,
+            idx,
+            s.guesses.len());
 
-            // Iterate over the answers, early-outing if a bucket is used twice.
-            for answer in answers.iter() {
-                let score = s.score_cache[guess][*answer];
-                if SEEN_TABLE[score as usize] == COUNTER {
-                    return false;
-                }
-                SEEN_TABLE[score as usize] = COUNTER;
-            }
+            let buckets = s.bucket_answers(idx, answers);
+        if buckets.iter().all(|v| { can_solve(s, num_guesses - 1, &v) }) {
             return true;
         }
     }
-
-    let buckets = s.bucket_answers(guess, answers);
-    buckets.iter().all(|v| {
-        can_solve(s, num_guesses - 1, &v)
-    })
+    false
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -256,11 +280,6 @@ fn can_solve_noisy(
     num_guesses: usize,
     answers: &[usize]
 ) -> bool {
-    if num_guesses == 1 {
-        // With a single guess, can only identify one word.
-        return answers.len() == 1
-    }
-
     for (idx, guess) in s.guesses.iter().enumerate() {
         eprintln!("Trying guess {} ({}/{})", guess, idx, s.guesses.len());
         if can_solve_with_guess_noisy(s, idx, num_guesses, answers) {
@@ -280,7 +299,8 @@ fn can_solve_with_guess_noisy(
 
     for (idx, bucket) in buckets.iter().enumerate() {
         eprint!("    Bucket {}/{} (size {})... ", idx, buckets.len(), bucket.len());
-        let soluble = can_solve_wordy(s, num_guesses - 1, &bucket);
+        assert_eq!(num_guesses - 1, 3);
+        let soluble = can_solve(s, num_guesses - 1, &bucket);
         if soluble {
             eprintln!("solved");
         } else {
@@ -289,29 +309,6 @@ fn can_solve_with_guess_noisy(
         }
     }
     true
-}
-
-fn can_solve_wordy(
-    s: &Scorer,
-    num_guesses: usize,
-    answers: &[usize]
-) -> bool {
-    if num_guesses == 1 {
-        // With a single guess, can only identify one word.
-        return answers.len() == 1
-    }
-
-    for (idx, guess) in s.guesses.iter().enumerate() {
-        eprint!(
-            " {:5} {:5}/{:5}\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08",
-            guess,
-            idx,
-            s.guesses.len());
-        if can_solve_with_guess(s, idx, num_guesses, answers) {
-            return true;
-        }
-    }
-    false
 }
 
 ////////////////////////////////////////////////////////////////////////
