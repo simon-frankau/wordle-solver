@@ -73,11 +73,13 @@ fn score_wordle(guess: &[u8], answer: &[u8]) -> u8 {
 //
 
 struct Scorer {
-    // We load the strings from a file, and then convert to u8 slices for
-    // efficiency.
+    // Once the scores are precalculated, we refer to everything by indices.
     guesses: Vec<String>,
     answers: Vec<String>,
     score_cache: Vec<Vec<u8>>,
+
+    // Awkward place to put reused vector.
+    bucket_vec: Vec<Vec<usize>>,
 }
 
 impl Scorer {
@@ -111,10 +113,13 @@ impl Scorer {
             })
             .collect::<Vec<Vec<BucketId>>>();
 
+        let bucket_vec = (0..MAX_BUCKET).map(|_| Vec::new()).collect::<Vec<_>>();
+
         Scorer {
             guesses,
             answers,
             score_cache,
+            bucket_vec
         }
     }
 
@@ -138,6 +143,20 @@ impl Scorer {
         let mut v: Vec<_> = buckets.into_iter().map(|(_k, v)| (v.len(), v)).collect();
         v.sort_by(|a, b| b.cmp(a));
         v.into_iter().map(|(_k, v)| v).collect()
+    }
+
+    // Version of bucket_answers used for the 3-guess case.
+    fn bucket_answers3<'a>(&mut self, guess: usize, answers: &[usize]) {
+        for bucket in self.bucket_vec.iter_mut() {
+            bucket.clear();
+        }
+
+        for answer in answers.iter() {
+            let score = self.score_cache[guess][*answer];
+            self.bucket_vec[score as usize].push(*answer);
+        }
+
+        self.bucket_vec.sort_by(|a, b| b.len().cmp(&a.len()));
     }
 
     // Optimise the order in which guesses are made, so that those
@@ -228,14 +247,14 @@ fn can_solve_with_guess2(
 }
 
 fn can_solve3(
-    s: &Scorer,
+    s: &mut Scorer,
     answers: &[usize]
 ) -> bool {
     (0..s.guesses.len())
         .any(|guess| {
-            let buckets = s.bucket_answers(guess, answers);
-            buckets.iter().all(|v| {
-                can_solve2(s, &v)
+            s.bucket_answers3(guess, answers);
+            s.bucket_vec.iter().all(|v| {
+                v.is_empty() || can_solve2(s, &v)
             })
         })
 }
@@ -246,7 +265,7 @@ fn can_solve3(
 // solution from the given answer list? Guesses should be sorted to
 // put best splitters first to make finding answers faster.
 fn can_solve(
-    s: &Scorer,
+    s: &mut Scorer,
     num_guesses: usize,
     answers: &[usize]
 ) -> bool {
@@ -256,10 +275,10 @@ fn can_solve(
         return can_solve2(s, answers)
     }
 
-    for (idx, guess) in s.guesses.iter().enumerate() {
+    for idx in 0..s.guesses.len() {
         eprint!(
             " {:5} {:5}/{:5}\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08",
-            guess,
+            s.guesses[idx],
             idx,
             s.guesses.len());
 
@@ -276,12 +295,12 @@ fn can_solve(
 //
 
 fn can_solve_noisy(
-    s: &Scorer,
+    s: &mut Scorer,
     num_guesses: usize,
     answers: &[usize]
 ) -> bool {
-    for (idx, guess) in s.guesses.iter().enumerate() {
-        eprintln!("Trying guess {} ({}/{})", guess, idx, s.guesses.len());
+    for idx in 0..10 { // TODO s.guesses.len() {
+        eprintln!("Trying guess {} ({}/{})", s.guesses[idx], idx, s.guesses.len());
         if can_solve_with_guess_noisy(s, idx, num_guesses, answers) {
             return true;
         }
@@ -290,7 +309,7 @@ fn can_solve_noisy(
 }
 
 fn can_solve_with_guess_noisy(
-    s: &Scorer,
+    s: &mut Scorer,
     guess: usize,
     num_guesses: usize,
     answers: &[usize]
@@ -316,11 +335,8 @@ fn can_solve_with_guess_noisy(
 //
 
 fn main() {
-    let s = {
-        let mut s = Scorer::new();
-        s.optimise_guess_order();
-        s
-    };
+    let mut s = Scorer::new();
+    s.optimise_guess_order();
 
     let answer_idxs = s
         .answers
@@ -329,7 +345,7 @@ fn main() {
         .map(|(idx, _)| idx)
         .collect::<Vec<usize>>();
 
-    let possible = can_solve_noisy(&s, DEPTH, &answer_idxs);
+    let possible = can_solve_noisy(&mut s, DEPTH, &answer_idxs);
     if possible {
         println!("Success with {} guesses!", DEPTH);
         process::exit(0);
