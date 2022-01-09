@@ -10,7 +10,8 @@ use this to heuristically steer finding optimal solutions.
 
 As a result of https://twitter.com/gcapell/status/1480003186836398080
 , I'm looking at how many steps the obvious greedy algorithm takes to
-guess, in the worst case.
+guess, in the worst case. It turns out that even a greedy guessing
+algorithm can always solve Wordle in 5 guesses.
 
 # Solutions
 
