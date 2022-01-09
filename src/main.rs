@@ -87,7 +87,7 @@ struct Scorer {
 impl Scorer {
     fn new() -> Scorer {
         // Load the strings...
-        let guesses = std::fs::read_to_string("words/possible_guesses.txt")
+        let mut guesses = std::fs::read_to_string("words/possible_guesses.txt")
             .unwrap()
             .lines()
             .filter(|s| !s.is_empty())
@@ -99,6 +99,11 @@ impl Scorer {
             .filter(|s| !s.is_empty())
             .map(|s| String::from(s))
             .collect::<Vec<String>>();
+
+        // Answers are also possible guesses!
+        for answer in answers.iter() {
+            guesses.push(answer.clone());
+        }
 
         // Score them all up-front.
         let score_cache = guesses
