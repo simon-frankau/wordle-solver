@@ -6,6 +6,12 @@ The current implementation, for each guess, works out the worst case
 number of possible solutions if we receive a particular result. We can
 use this to heuristically steer finding optimal solutions.
 
+# What's this branch about?
+
+As a result of https://twitter.com/gcapell/status/1480003186836398080
+, I'm looking at how many steps the obvious greedy algorithm takes to
+guess, in the worst case.
+
 # Solutions
 
 A word can be uniquely determined in 5 guesses (that is, the fifth

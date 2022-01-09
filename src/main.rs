@@ -2,15 +2,9 @@
 // Wordle solver
 //
 
-use clap::Parser;
-
 use std::collections::HashMap;
-use std::process;
 
 const WORD_LEN: usize = 5;
-const DEPTH: usize = 4;
-
-const MAX_BUCKET: usize = 3 * 3 * 3 * 3 * 3;
 
 // Bucket can be stored as u8 - 3^5 <= 255.
 type BucketId = u8;
@@ -79,9 +73,6 @@ struct Scorer {
     guesses: Vec<String>,
     answers: Vec<String>,
     score_cache: Vec<Vec<u8>>,
-
-    // Awkward place to put reused vector.
-    bucket_vec: Vec<Vec<usize>>,
 }
 
 impl Scorer {
@@ -120,13 +111,10 @@ impl Scorer {
             })
             .collect::<Vec<Vec<BucketId>>>();
 
-        let bucket_vec = (0..MAX_BUCKET).map(|_| Vec::new()).collect::<Vec<_>>();
-
         Scorer {
             guesses,
             answers,
             score_cache,
-            bucket_vec
         }
     }
 
@@ -152,18 +140,20 @@ impl Scorer {
         v.into_iter().map(|(_k, v)| v).collect()
     }
 
-    // Version of bucket_answers used for the 3-guess case.
-    fn bucket_answers3<'a>(&mut self, guess: usize, answers: &[usize]) {
-        for bucket in self.bucket_vec.iter_mut() {
-            bucket.clear();
-        }
+    // Returns the worst case bucket size for the guess, and the bucketing.
+    fn find_greedy_worst_case<'a>(&self, guess: usize, answers: &[usize]) -> (usize, HashMap<u8, Vec<usize>>) {
+        let mut buckets = HashMap::new();
 
         for answer in answers.iter() {
             let score = self.score_cache[guess][*answer];
-            self.bucket_vec[score as usize].push(*answer);
+            buckets
+                .entry(score)
+                .or_insert_with(|| Vec::new())
+                .push(*answer);
         }
 
-        self.bucket_vec.sort_by(|a, b| b.len().cmp(&a.len()));
+        let worst_case = buckets.values().map(|b| b.len()).max().unwrap();
+        (worst_case, buckets)
     }
 
     // Optimise the order in which guesses are made, so that those
@@ -206,178 +196,46 @@ impl Scorer {
 }
 
 ////////////////////////////////////////////////////////////////////////
-// Depth-first search solver, biased towards trying best splitters first.
-//
+// Greedy guesser
 
-// Specialise last layers of search as an optimisation.
-
-// Allocated once to optimise leaf case.
-pub static mut SEEN_TABLE: &'static mut [u8] = &mut [0; MAX_BUCKET];
-pub static mut COUNTER: u8 = 0;
-
-// Can we solve with 2 guesses? 2nd guess must be correct answer, which
-// means all we need to do is check that the first guess full determines
-// - there can be at most one possible solution per bucket.
-fn can_solve2(s: &Scorer, answers: &[usize]) -> bool {
-    (0..s.guesses.len()).any(|guess| can_solve_with_guess2(s, guess, answers))
-}
-
-fn can_solve_with_guess2(
-    s: &Scorer,
-    guess: usize,
-    answers: &[usize]
-) -> bool {
-    unsafe {
-        // Special case - next guess has to be final, so check if each bucket
-        // contains at most one entry.
-        //
-        // Set counter to a value not seen in the array.
-        if COUNTER == u8::MAX {
-            COUNTER = 0;
-            for entry in SEEN_TABLE.iter_mut() {
-                *entry = 255;
-            }
-        } else {
-            COUNTER += 1;
-        }
-
-        // Iterate over the answers, early-outing if a bucket is used twice.
-        for answer in answers.iter() {
-            let score = s.score_cache[guess][*answer];
-            if SEEN_TABLE[score as usize] == COUNTER {
-                return false;
-            }
-            SEEN_TABLE[score as usize] = COUNTER;
-        }
-        true
-    }
-}
-
-fn can_solve3(
-    s: &mut Scorer,
-    answers: &[usize]
-) -> bool {
-    (0..s.guesses.len())
-        .any(|guess| {
-            s.bucket_answers3(guess, answers);
-            s.bucket_vec.iter().all(|v| {
-                v.is_empty() || can_solve2(s, &v)
-            })
-        })
-}
-
-// General solver
-//
-// Can we, in the given number of guesses, uniquely identify the
-// solution from the given answer list? Guesses should be sorted to
-// put best splitters first to make finding answers faster.
-fn can_solve(
-    s: &mut Scorer,
-    num_guesses: usize,
-    answers: &[usize]
-) -> bool {
-    if num_guesses == 3 {
-        return can_solve3(s, answers)
-    } else if num_guesses == 2 {
-        return can_solve2(s, answers)
+// Returns the number of guesses it needed.
+fn guess_greedily(s: &Scorer, depth: usize, answers: &[usize], target: usize) -> usize {
+    // Final guess?
+    if answers.len() == 1 {
+        return depth + 1;
     }
 
-    for idx in 0..s.guesses.len() {
-        eprint!(
-            " {:5} {:5}/{:5}\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08\x08",
-            s.guesses[idx],
-            idx,
-            s.guesses.len());
+    // Try all words, and find the one with the smallest worst case set.
+    let ((num_poss, buckets), greedy_guess) = (0..s.guesses.len())
+        .map(|guess| (s.find_greedy_worst_case(guess, answers), guess))
+        .min_by(|((a, _), ai), ((b, _), bi)| (*a, *ai).cmp(&(*b, *bi)))
+        .unwrap();
 
-            let buckets = s.bucket_answers(idx, answers);
-        if buckets.iter().all(|v| { can_solve(s, num_guesses - 1, &v) }) {
-            return true;
-        }
-    }
-    false
-}
+    eprintln!(" Guessing {}, worst case {} possibilities", s.guesses[greedy_guess], num_poss);
 
-////////////////////////////////////////////////////////////////////////
-// Top-level copy of solver, with more diagnostic spam
-//
+    // And recurse
+    let target_score = s.score_cache[greedy_guess][target];
+    let target_answers = buckets.get(&target_score).unwrap();
+    assert!(target_answers.iter().any(|t| *t == target));
 
-fn can_solve_noisy(
-    s: &mut Scorer,
-    num_guesses: usize,
-    answers: &[usize],
-    shard_index: usize,
-    shard_count: usize,
-) -> bool {
-    for idx in 0..s.guesses.len() {
-        if idx % shard_count != shard_index {
-            continue;
-        }
-        eprintln!("Trying guess {} ({}/{})", s.guesses[idx], idx, s.guesses.len());
-        if can_solve_with_guess_noisy(s, idx, num_guesses, answers) {
-            return true;
-        }
-    }
-    false
-}
-
-fn can_solve_with_guess_noisy(
-    s: &mut Scorer,
-    guess: usize,
-    num_guesses: usize,
-    answers: &[usize]
-) -> bool {
-    let buckets = s.bucket_answers(guess, answers);
-
-    for (idx, bucket) in buckets.iter().enumerate() {
-        eprint!("    Bucket {}/{} (size {})... ", idx, buckets.len(), bucket.len());
-        assert_eq!(num_guesses - 1, 3);
-        let soluble = can_solve(s, num_guesses - 1, &bucket);
-        if soluble {
-            eprintln!("solved");
-        } else {
-            eprintln!("insoluble");
-            return false;
-        }
-    }
-    true
+    guess_greedily(s, depth + 1, &target_answers, target)
 }
 
 ////////////////////////////////////////////////////////////////////////
 // Entry point
 //
 
-#[derive(Parser)]
-#[clap(version = "0.1", author = "Simon Frankau <sgf@arbitrary.name>")]
-#[clap(about = "Wordle solver solver")]
-struct Opts {
-    /// Shard count. Defaults to 1.
-    #[clap(long, default_value = "1")]
-    shard_count: usize,
-    /// Shard index. Should be between 0 and shard count - 1. Defaults to 0.
-    #[clap(long, default_value = "0")]
-    shard_index: usize,
-}
-
 fn main() {
-    let opts: Opts = Opts::parse();
-
-    assert!(opts.shard_index < opts.shard_count);
     let mut s = Scorer::new();
     s.optimise_guess_order();
 
-    let answer_idxs = s
-        .answers
-        .iter()
-        .enumerate()
-        .map(|(idx, _)| idx)
-        .collect::<Vec<usize>>();
+    let answers = (0..s.answers.len()).collect::<Vec<usize>>();
 
-    let possible = can_solve_noisy(&mut s, DEPTH, &answer_idxs, opts.shard_index, opts.shard_count);
-    if possible {
-        println!("Success with {} guesses!", DEPTH);
-        process::exit(0);
+    for answer in 0..s.answers.len() {
+        eprintln!("Trying to greedliy solve {}", s.answers[answer]);
+        let steps = guess_greedily(&s, 0, &answers, answer);
+        eprintln!("Took {} guesses", steps);
     }
-    println!("Cannot fully determine with {} guesses. Oh well.", DEPTH);
 }
 
 #[cfg(test)]
