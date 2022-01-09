@@ -182,7 +182,7 @@ impl Scorer {
         worst_cases.sort();
 
         for (worst_case, _idx, guess) in worst_cases.iter() {
-            println!("{}: {}", worst_case, guess);
+            eprintln!("{}: {}", worst_case, guess);
         }
 
         // Sort the guess list and the score cache to match the
@@ -217,6 +217,40 @@ fn guess_greedily(s: &Scorer, depth: usize, answers: &[usize], target: usize) ->
     let target_score = s.score_cache[greedy_guess][target];
     let target_answers = buckets.get(&target_score).unwrap();
     assert!(target_answers.iter().any(|t| *t == target));
+    eprintln!(" Actually {} possibilities", target_answers.len());
+
+    guess_greedily(s, depth + 1, &target_answers, target)
+}
+
+// Returns the first best guess to use (since it's always the same).
+fn first_guess(s: &Scorer, answers: &[usize]) -> (usize, usize, HashMap<u8, Vec<usize>>) {
+    // Try all words, and find the one with the smallest worst case set.
+    let ((num_poss, buckets), greedy_guess) = (0..s.guesses.len())
+        .map(|guess| (s.find_greedy_worst_case(guess, answers), guess))
+        .min_by(|((a, _), ai), ((b, _), bi)| (*a, *ai).cmp(&(*b, *bi)))
+        .unwrap();
+
+    eprintln!("Will always use {} as first, with {} possibilities in worst case",
+        s.guesses[greedy_guess],
+        num_poss);
+
+    (greedy_guess, num_poss, buckets)
+}
+
+// Like guess_greedily, but always applies the known-greedy-best guess.
+fn guess_greedily_hack(
+    s: &Scorer,
+    depth: usize,
+    target: usize,
+    (greedy_guess, num_poss, buckets): &(usize, usize, HashMap<u8, Vec<usize>>)
+) -> usize {
+    eprintln!(" Guessing {}, worst case {} possibilities", s.guesses[*greedy_guess], num_poss);
+
+    // And recurse
+    let target_score = s.score_cache[*greedy_guess][target];
+    let target_answers = buckets.get(&target_score).unwrap();
+    assert!(target_answers.iter().any(|t| *t == target));
+    eprintln!(" Actually {} possibilities", target_answers.len());
 
     guess_greedily(s, depth + 1, &target_answers, target)
 }
@@ -231,10 +265,14 @@ fn main() {
 
     let answers = (0..s.answers.len()).collect::<Vec<usize>>();
 
+    let hack = first_guess(&s, &answers);
+
     for answer in 0..s.answers.len() {
-        eprintln!("Trying to greedliy solve {}", s.answers[answer]);
-        let steps = guess_greedily(&s, 0, &answers, answer);
+        eprintln!("Trying to greedliy solve {} ({}/{})", s.answers[answer], answer, s.answers.len());
+        let steps = guess_greedily_hack(&s, 0, answer, &hack);
         eprintln!("Took {} guesses", steps);
+        // Actual useful data goes to stdout :)
+        println!("{} {}", s.answers[answer], steps);
     }
 }
 
