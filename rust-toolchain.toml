@@ -1,0 +1,3 @@
+[toolchain]
+# "nightly" is currently (2021-10-01) needed for the clap-3 beta.
+channel = "nightly"

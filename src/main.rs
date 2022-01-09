@@ -2,6 +2,8 @@
 // Wordle solver
 //
 
+use clap::Parser;
+
 use std::collections::HashMap;
 use std::process;
 
@@ -297,9 +299,14 @@ fn can_solve(
 fn can_solve_noisy(
     s: &mut Scorer,
     num_guesses: usize,
-    answers: &[usize]
+    answers: &[usize],
+    shard_index: usize,
+    shard_count: usize,
 ) -> bool {
-    for idx in 0..10 { // TODO s.guesses.len() {
+    for idx in 0..s.guesses.len() {
+        if idx % shard_count != shard_index {
+            continue;
+        }
         eprintln!("Trying guess {} ({}/{})", s.guesses[idx], idx, s.guesses.len());
         if can_solve_with_guess_noisy(s, idx, num_guesses, answers) {
             return true;
@@ -334,7 +341,22 @@ fn can_solve_with_guess_noisy(
 // Entry point
 //
 
+#[derive(Parser)]
+#[clap(version = "0.1", author = "Simon Frankau <sgf@arbitrary.name>")]
+#[clap(about = "Wordle solver solver")]
+struct Opts {
+    /// Shard count. Defaults to 1.
+    #[clap(long, default_value = "1")]
+    shard_count: usize,
+    /// Shard index. Should be between 0 and shard count - 1. Defaults to 0.
+    #[clap(long, default_value = "0")]
+    shard_index: usize,
+}
+
 fn main() {
+    let opts: Opts = Opts::parse();
+
+    assert!(opts.shard_index < opts.shard_count);
     let mut s = Scorer::new();
     s.optimise_guess_order();
 
@@ -345,7 +367,7 @@ fn main() {
         .map(|(idx, _)| idx)
         .collect::<Vec<usize>>();
 
-    let possible = can_solve_noisy(&mut s, DEPTH, &answer_idxs);
+    let possible = can_solve_noisy(&mut s, DEPTH, &answer_idxs, opts.shard_index, opts.shard_count);
     if possible {
         println!("Success with {} guesses!", DEPTH);
         process::exit(0);
